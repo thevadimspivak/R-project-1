@@ -1,0 +1,172 @@
+# Упражнение 1
+
+С помощью пакета rvest соберите данные по смартфонам с сайта Яндекс.Маркет (Москва). В итоговой таблице должно быть не менее 50 записей и не менее 8 признаков, из которых как минимум два количественных. Снабдите файл справочником в формате Markdown.
+
+### Яндекс.Маркет, смартфоны (Москва)
+
+Стр. 1: [market.yandex.ru](https://market.yandex.ru/catalog--smartfony/16814639/list?hid=91491&glfilter=16816262%3A16816264&local-offers-first=0&onstock=1)
+
+Стр. 2: [market.yandex.ru](https://market.yandex.ru/catalog--smartfony/16814639/list?hid=91491&glfilter=16816262%3A16816264&local-offers-first=0&onstock=1&page=2)
+
+```{r, echo=FALSE, message=FALSE, null_prefix=TRUE, comment=NA}
+
+# устанавливаем русскую локаль
+invisible(capture.output( Sys.setlocale("LC_ALL","Russian_Russia") ))
+
+# загрузка библиотек
+library(rvest)
+library(knitr)
+
+# создаём директорию для лога числа загрузок, если она ещё не существует
+data.dir = './data'
+if (!file.exists(data.dir)) {
+  invisible(capture.output( dir.create(data.dir) ))
+}
+
+# создаём файл с логом загрузок, если он ещё не существует
+log.filename = './data/download.log'
+if (!file.exists(log.filename)) {
+  invisible(capture.output( file.create(log.filename) ))
+}
+
+# функция перебора тегов внутри тегов более высокого уровня
+get_tags = function(node) {
+  # найти все теги с нужной опцией
+  raw_data = html_nodes(node, selector) %>% html_text
+  # значения нулевой длины меняем на пропуски
+  data_NAs <- ifelse(length(raw_data) == 0, NA, raw_data)
+}
+
+# URL страницы для скраппинга
+url1 <- 'https://market.yandex.ru/catalog--smartfony/16814639/list?hid=91491&glfilter=16816262%3A16816264&local-offers-first=0&onstock=1'
+url2 <- 'https://market.yandex.ru/catalog--smartfony/16814639/list?hid=91491&glfilter=16816262%3A16816264&local-offers-first=0&onstock=1&page=2'
+
+# читаем HTML страницы
+webpage1 <- read_html(url1)
+webpage2 <- read_html(url2)
+
+
+### парсинг
+
+
+# функция извлечения 8 признаков из объявлений на веб-страницы
+page_parser = function(webpage, page) {
+  
+  # выводим номер страницы
+  cat("Page: ", page, "\n")
+  
+  ## парсинг признаков
+  
+  # бренд
+  brand = webpage %>% html_nodes('.n-snippet-cell2__brand-name') %>% html_text 
+  cat("Brand: ", length(brand), "\n")
+  
+  # модель
+  model = webpage %>% html_nodes('.n-snippet-cell2__title a') %>% html_text 
+  cat("Model: ", length(model), "\n")
+  
+  # цена
+  price = webpage %>% html_nodes('.n-snippet-cell2__main-price-wrapper') %>% html_nodes('.price') %>% html_text
+  cat("Price: ", length(price), "\n")
+  
+  # рейтинг
+  # assign("selector", ".rating__value", envir = .GlobalEnv)
+  selector <<- '.rating__value'
+  doc = html_nodes(webpage, '.n-snippet-cell2__body')
+  rating = sapply(doc, get_tags)
+  cat("Raiting: ", length(rating), "\n")
+  
+  # число предложений
+  predlozhenii = webpage %>% html_nodes('.n-snippet-cell2__more-prices-link') %>% html_text
+  cat("Number of offerings: ", length(predlozhenii), "\n")
+  
+  # цена от
+  selector <<- '.price'
+  doc = html_nodes(webpage, '.n-snippet-cell2__more-prices-link')
+  ot = sapply(doc, get_tags)
+  cat("Price from: ", length(ot), "\n")
+  
+  # лейбла "выбор покупателей" 
+  selector <<- '.n-reasons-to-buy__label'
+  doc = webpage %>% html_nodes('.n-snippet-cell2__stickers')
+  sticker1 = sapply(doc, get_tags)
+  cat("Sticker 1: ", length(sticker1), "\n")
+  
+  # лейбла "новинка" 
+  selector <<- '.stickers__sticker.stickers__sticker_type_new'
+  doc = webpage %>% html_nodes('.n-snippet-cell2__stickers')
+  sticker2 = sapply(doc, get_tags)
+  cat("Sticker 2: ", length(sticker2), "\n")
+  
+  # собираем признаки во фрейм с данными
+  df = data.frame(Brand = brand, Model = model, Price = price, Rating = rating,
+                  NumOffers = predlozhenii, PriceFrom = ot, Choice = sticker1, New = sticker2)
+  
+  # возвращаем фрейм с данными
+  df
+  
+}
+
+# запускаем парсинг страниц
+df1 = page_parser(webpage1, 1)
+df2 = page_parser(webpage2, 2)
+
+# объединяем данные с двух страниц в один фрейм
+df = rbind(df1, df2)
+
+
+### Очистка данных
+
+
+# преобразуем колоку Brand в строковый тип
+df$Brand = as.character(df$Brand)
+
+# преобразуем колоку Model в строковый тип
+df$Model = as.character(df$Model)
+
+# извлекаем только цифры в колонке Price, преобразуем в числовой тип 
+df$Price = as.character(df$Price)
+df$Price = sub(" ", "", df$Price)
+df$Price = unlist(regmatches(df$Price, gregexpr("[[:digit:]]+", df$Price)))
+df$Price = as.numeric(df$Price)
+
+# преобразуем Rating в числовой тип
+df$Rating = as.numeric(df$Rating) 
+
+# извлекаем цифры в колонке NumOffers, преобразуем в числовой тип 
+df$NumOffers = as.numeric( substring(df$NumOffers, 1, regexpr('\u00A0', df$NumOffers) - 1) )
+
+# удаляем "неразрывный пробел и знак рубля" и пробелы в колонке PriceFrom, преобразуем в числовой тип
+df$PriceFrom = sub("\u00A0\u20bd", "", df$PriceFrom)
+df$PriceFrom = as.numeric( gsub(" ", "", df$PriceFrom) )
+
+# преобразуем колоку Choice в строковый тип
+df$Choice = as.character(df$Choice)
+df$Choice[is.na(df$Choice) == F] = "Yes"
+df$Choice[is.na(df$Choice) == T] = "No"
+
+# преобразуем колоку New в строковый тип
+df$New = as.character(df$New)
+df$New[is.na(df$New) == F] = "Yes"
+df$New[is.na(df$New) == T] = "No"
+
+# выводим фрейм с данными в консоль
+kable(df, row.names = T)
+
+
+### вывод типа данных в колонках в консоль, запись данных в файл, запись даты в лог
+
+
+# выводим тип данных в колонках в консоль
+cat("Types of data in dataframe:", "\n")
+col_types = sapply(df, class)
+col_types = data.frame(Name = names(col_types), Type = col_types)
+kable(col_types, row.names = F)
+
+# пишем фрейм с данными в файл
+write.csv(df, "data/smartphones.csv", row.names = F)
+
+# пишем в лог дату и время парсинга
+write(paste('File "smartphones.csv" recorded', Sys.time()), file = log.filename, append = T)
+
+```
